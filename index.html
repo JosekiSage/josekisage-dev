@@ -1826,6 +1826,7 @@ function App(){
     var client=window.google.accounts.oauth2.initTokenClient({
       client_id:DRIVE_CLIENT_ID,
       scope:"https://www.googleapis.com/auth/drive.file",
+      prompt:"select_account",
       callback:function(resp){
         if(resp.error||!resp.access_token){ setDriveError("Authorization failed."); return; }
         localStorage.setItem("joseki-drive-token",resp.access_token);
