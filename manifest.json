@@ -1,0 +1,24 @@
+{
+  "name": "Joseki Sage",
+  "short_name": "Joseki Sage",
+  "description": "Go Joseki Trainer",
+  "start_url": ".",
+  "display": "standalone",
+  "background_color": "#4A8870",
+  "theme_color": "#1C1814",
+  "orientation": "any",
+  "icons": [
+    {
+      "src": "icon-192m.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "icon-splash.png",
+      "sizes": "800x800",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}
