@@ -1863,8 +1863,16 @@ function App(){
         var localTime=localParsed&&localParsed.lastModified?new Date(localParsed.lastModified):new Date(0);
         return driveReadFile(token,file.id).then(function(driveData){
           if(!driveData){ setDriveStatus("error"); setDriveError("Could not read Drive file."); return; }
-          setDriveConflict({driveData:driveData,driveTime:driveTime,localTime:localTime});
-          setDriveStatus("idle");
+          // If no local custom entries exist, just load from Drive silently
+          var localEntries=entries.filter(function(e){ return !e._default; });
+          if(localEntries.length===0){
+            driveApplyData(driveData);
+            var ts=new Date().toISOString(); localStorage.setItem("joseki-drive-last-sync",ts); setDriveLastSync(ts);
+            setDriveStatus("idle");
+          } else {
+            setDriveConflict({driveData:driveData,driveTime:driveTime,localTime:localTime});
+            setDriveStatus("idle");
+          }
         });
       }
     }).catch(function(e){ setDriveStatus("error"); setDriveError("Drive error: "+(e.message||e)); });
@@ -1902,6 +1910,33 @@ function App(){
     document.addEventListener("click",handler);
     return function(){ document.removeEventListener("click",handler); };
   },[showDriveMenu]);
+
+  // On app startup, if a token is stored, fetch library from Drive
+  var driveStartupRan=useRef(false);
+  useEffect(function(){
+    if(driveStartupRan.current) return;
+    driveStartupRan.current=true;
+    var token=localStorage.getItem("joseki-drive-token");
+    var fileId=localStorage.getItem("joseki-drive-file-id");
+    if(!token||!fileId) return;
+    setDriveStatus("loading");
+    driveReadFile(token,fileId).then(function(driveData){
+      if(!driveData){
+        // Token may have expired - clear it
+        localStorage.removeItem("joseki-drive-token");
+        setDriveToken(null);
+        setDriveStatus("idle");
+        return;
+      }
+      driveApplyData(driveData);
+      var ts=new Date().toISOString(); localStorage.setItem("joseki-drive-last-sync",ts); setDriveLastSync(ts);
+      setDriveStatus("idle");
+    }).catch(function(){
+      localStorage.removeItem("joseki-drive-token");
+      setDriveToken(null);
+      setDriveStatus("idle");
+    });
+  },[]);
 
   var driveTokenRef=useRef(driveToken);
   var driveFileIdRef=useRef(driveFileId);
