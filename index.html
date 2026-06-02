@@ -269,6 +269,16 @@ function driveWriteFile(token,fileId,data){
     .catch(function(){ return null; });
   }
 }
+function isDefaultEntry(entry,folders){
+  var folderId=entry.folderId;
+  while(folderId){
+    if(folderId==="f-default") return true;
+    var folder=null;
+    for(var i=0;i<folders.length;i++){ if(folders[i].id===folderId){ folder=folders[i]; break; } }
+    folderId=folder?folder.parentId:null;
+  }
+  return false;
+}
 // ─────────────────────────────────────────────────────────────────────────────
 
 // --- Practice mode helpers ---
@@ -1846,33 +1856,46 @@ function App(){
     setDriveStatus("idle"); setDriveError(null); setShowDriveMenu(false);
   }
 
+  function getCustomEntries(){ return entries.filter(function(e){ return !isDefaultEntry(e,folders); }); }
+  function getCustomFolders(){ return folders.filter(function(f){ return f.id!=="f-default"&&f.id!=="f-custom"; }); }
+  function hasLocalCustomData(){ return getCustomEntries().length>0; }
+
+  function driveHandleConflict(token,file,driveData){
+    var driveTime=new Date(file.modifiedTime);
+    var localRaw=localStorage.getItem("joseki-lab-v8");
+    var localParsed=localRaw?JSON.parse(localRaw):null;
+    var localTime=localParsed&&localParsed.lastModified?new Date(localParsed.lastModified):new Date(0);
+    // No local custom data — load from Drive silently
+    if(!hasLocalCustomData()){
+      driveApplyData(driveData);
+      var ts=new Date().toISOString(); localStorage.setItem("joseki-drive-last-sync",ts); setDriveLastSync(ts);
+      setDriveStatus("idle");
+      return;
+    }
+    // No Drive data — upload local
+    if(!driveData||!(driveData.entries&&driveData.entries.length>0)){
+      driveSaveNow(token,file.id);
+      return;
+    }
+    // Both have data — show conflict dialogue
+    setDriveConflict({driveData:driveData,driveTime:driveTime,localTime:localTime});
+    setDriveStatus("idle");
+  }
+
   function driveLoadOnConnect(token){
     setDriveStatus("loading");
     driveFindFile(token).then(function(file){
       if(!file){
-        var localData={entries:entries.filter(function(e){ return !e._default; }),folders:folders.filter(function(f){ return f.id!=="f-default"; }),lastModified:new Date().toISOString()};
+        // No Drive file yet — upload local custom library
+        var localData={entries:getCustomEntries(),folders:getCustomFolders(),lastModified:new Date().toISOString()};
         return driveWriteFile(token,null,localData).then(function(newId){
-          if(newId){ localStorage.setItem("joseki-drive-file-id",newId); setDriveFileId(newId); localStorage.setItem("joseki-drive-last-sync",new Date().toISOString()); setDriveLastSync(new Date().toISOString()); }
+          if(newId){ localStorage.setItem("joseki-drive-file-id",newId); setDriveFileId(newId); var ts=new Date().toISOString(); localStorage.setItem("joseki-drive-last-sync",ts); setDriveLastSync(ts); }
           setDriveStatus("idle");
         });
       } else {
         localStorage.setItem("joseki-drive-file-id",file.id); setDriveFileId(file.id);
-        var driveTime=new Date(file.modifiedTime);
-        var localRaw=localStorage.getItem("joseki-lab-v8");
-        var localParsed=localRaw?JSON.parse(localRaw):null;
-        var localTime=localParsed&&localParsed.lastModified?new Date(localParsed.lastModified):new Date(0);
         return driveReadFile(token,file.id).then(function(driveData){
-          if(!driveData){ setDriveStatus("error"); setDriveError("Could not read Drive file."); return; }
-          // If no local custom entries exist, just load from Drive silently
-          var localEntries=entries.filter(function(e){ return !e._default; });
-          if(localEntries.length===0){
-            driveApplyData(driveData);
-            var ts=new Date().toISOString(); localStorage.setItem("joseki-drive-last-sync",ts); setDriveLastSync(ts);
-            setDriveStatus("idle");
-          } else {
-            setDriveConflict({driveData:driveData,driveTime:driveTime,localTime:localTime});
-            setDriveStatus("idle");
-          }
+          driveHandleConflict(token,file,driveData);
         });
       }
     }).catch(function(e){ setDriveStatus("error"); setDriveError("Drive error: "+(e.message||e)); });
@@ -1881,9 +1904,7 @@ function App(){
   function driveSaveNow(token,fileId){
     if(!token||!fileId) return;
     setDriveStatus("syncing");
-    var customEntries=entries.filter(function(e){ return !e._default; });
-    var customFolders=folders.filter(function(f){ return f.id!=="f-default"&&f.id!=="f-custom"; });
-    var data={entries:customEntries,folders:customFolders,lastModified:new Date().toISOString()};
+    var data={entries:getCustomEntries(),folders:getCustomFolders(),lastModified:new Date().toISOString()};
     driveWriteFile(token,fileId,data).then(function(result){
       if(result){ var ts=new Date().toISOString(); localStorage.setItem("joseki-drive-last-sync",ts); setDriveLastSync(ts); setDriveStatus("idle"); }
       else { setDriveStatus("error"); setDriveError("Failed to save to Drive."); }
@@ -1893,11 +1914,13 @@ function App(){
   function driveApplyData(data){
     if(!data) return;
     setEntries(function(prev){
-      var defaults=prev.filter(function(e){ return e._default; });
-      var incoming=(data.entries||[]).map(function(e){ return Object.assign({},e,{_default:false}); });
+      // Keep all entries that are under f-default (default library)
+      var defaults=prev.filter(function(e){ return isDefaultEntry(e,folders); });
+      var incoming=data.entries||[];
       return defaults.concat(incoming);
     });
     setFolders(function(prev){
+      // Keep system folders (f-default, f-custom) and all their subfolders
       var system=prev.filter(function(f){ return f.id==="f-default"||f.id==="f-custom"; });
       var incoming=(data.folders||[]).filter(function(f){ return f.id!=="f-default"&&f.id!=="f-custom"; });
       return system.concat(incoming);
@@ -1911,32 +1934,37 @@ function App(){
     return function(){ document.removeEventListener("click",handler); };
   },[showDriveMenu]);
 
-  // On app startup, if a token is stored, fetch library from Drive
+  // On app startup, if a token and file ID are stored, fetch from Drive
+  // Wait for entries/folders to be loaded first (loaded===true)
   var driveStartupRan=useRef(false);
   useEffect(function(){
+    if(!loaded) return; // wait for localStorage to be loaded into state
     if(driveStartupRan.current) return;
     driveStartupRan.current=true;
     var token=localStorage.getItem("joseki-drive-token");
     var fileId=localStorage.getItem("joseki-drive-file-id");
     if(!token||!fileId) return;
     setDriveStatus("loading");
-    driveReadFile(token,fileId).then(function(driveData){
-      if(!driveData){
-        // Token may have expired - clear it
+    // Fetch both file metadata (for modifiedTime) and content
+    Promise.all([
+      driveFindFile(token),
+      driveReadFile(token,fileId)
+    ]).then(function(results){
+      var file=results[0]; var driveData=results[1];
+      if(!driveData||!file){
+        // Token expired or file gone — clear token
         localStorage.removeItem("joseki-drive-token");
         setDriveToken(null);
         setDriveStatus("idle");
         return;
       }
-      driveApplyData(driveData);
-      var ts=new Date().toISOString(); localStorage.setItem("joseki-drive-last-sync",ts); setDriveLastSync(ts);
-      setDriveStatus("idle");
+      driveHandleConflict(token,file,driveData);
     }).catch(function(){
       localStorage.removeItem("joseki-drive-token");
       setDriveToken(null);
       setDriveStatus("idle");
     });
-  },[]);
+  },[loaded]);
 
   var driveTokenRef=useRef(driveToken);
   var driveFileIdRef=useRef(driveFileId);
