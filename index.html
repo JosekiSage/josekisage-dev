@@ -243,8 +243,11 @@ function driveReadFile(token,fileId){
   return fetch(
     "https://www.googleapis.com/drive/v3/files/"+fileId+"?alt=media",
     {headers:{Authorization:"Bearer "+token}}
-  ).then(function(r){ if(!r.ok) return null; return r.json(); })
-  .catch(function(){ return null; });
+  ).then(function(r){
+    if(r.status===401) return {_driveAuthError:true};
+    if(!r.ok) return null;
+    return r.json();
+  }).catch(function(){ return null; });
 }
 function driveWriteFile(token,fileId,data){
   var body=JSON.stringify(data);
@@ -258,15 +261,20 @@ function driveWriteFile(token,fileId,data){
     return fetch(
       "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart",
       {method:"POST",headers:{Authorization:"Bearer "+token,"Content-Type":"multipart/related; boundary="+boundary},body:mp}
-    ).then(function(r){ if(!r.ok) return null; return r.json(); })
-    .then(function(d){ return d?d.id||null:null; })
+    ).then(function(r){
+      if(r.status===401) return {_driveAuthError:true};
+      if(r.status===403) return {_driveQuotaError:true};
+      if(!r.ok) return null; return r.json();
+    }).then(function(d){ return d?d.id||null:null; })
     .catch(function(){ return null; });
   } else {
     return fetch(
       "https://www.googleapis.com/upload/drive/v3/files/"+fileId+"?uploadType=media",
       {method:"PATCH",headers:{Authorization:"Bearer "+token,"Content-Type":"application/json"},body:body}
-    ).then(function(r){ return r.ok?fileId:null; })
-    .catch(function(){ return null; });
+    ).then(function(r){
+      if(r.status===401) return {_driveAuthError:true};
+      return r.ok?fileId:null;
+    }).catch(function(){ return null; });
   }
 }
 function isDefaultEntry(entry,folders){
@@ -1153,6 +1161,9 @@ function App(){
           return kept.concat(impEntries);
         });
 
+        // Update lastModified so Drive conflict detection knows this device has fresh data
+        var ts=new Date().toISOString();
+        try{ var lsData=JSON.parse(localStorage.getItem("joseki-lab-v8")||"{}"); lsData.lastModified=ts; localStorage.setItem("joseki-lab-v8",JSON.stringify(lsData)); }catch(ex){}
         setImportErr(""); setShowImportMenu(false);
       }catch(err){ setImportErr("Import failed: "+err.message); }
     };
@@ -1831,6 +1842,14 @@ function App(){
   const[qSession,setQSession]=useState({points:0,streak:0,totalC:0,totalW:0});
   const[qPlayerColor,setQPlayerColor]=useState("B");
 
+  function driveHandleAuthExpiry(){
+    // Token expired — clear stored token and prompt user to reconnect
+    localStorage.removeItem("joseki-drive-token");
+    setDriveToken(null);
+    setDriveStatus("error");
+    setDriveError("Session expired — click to reconnect");
+  }
+
   function driveConnect(){
     if(!window.google||!window.google.accounts){ setDriveError("Google Sign-In not loaded yet."); return; }
     var client=window.google.accounts.oauth2.initTokenClient({
@@ -1906,6 +1925,8 @@ function App(){
     setDriveStatus("syncing");
     var data={entries:getCustomEntries(),folders:getCustomFolders(),lastModified:new Date().toISOString()};
     driveWriteFile(token,fileId,data).then(function(result){
+      if(result&&result._driveAuthError){ driveHandleAuthExpiry(); return; }
+      if(result&&result._driveQuotaError){ setDriveStatus("error"); setDriveError("Google Drive storage full — free up space and try again."); return; }
       if(result){ var ts=new Date().toISOString(); localStorage.setItem("joseki-drive-last-sync",ts); setDriveLastSync(ts); setDriveStatus("idle"); }
       else { setDriveStatus("error"); setDriveError("Failed to save to Drive."); }
     }).catch(function(e){ setDriveStatus("error"); setDriveError("Drive error: "+(e.message||e)); });
@@ -1951,10 +1972,13 @@ function App(){
       driveReadFile(token,fileId)
     ]).then(function(results){
       var file=results[0]; var driveData=results[1];
+      if((driveData&&driveData._driveAuthError)||(file&&file._driveAuthError)){
+        driveHandleAuthExpiry(); return;
+      }
       if(!driveData||!file){
-        // Token expired or file gone — clear token
-        localStorage.removeItem("joseki-drive-token");
-        setDriveToken(null);
+        // File gone — clear stored file ID
+        localStorage.removeItem("joseki-drive-file-id");
+        setDriveFileId(null);
         setDriveStatus("idle");
         return;
       }
@@ -2699,8 +2723,18 @@ function App(){
             <div style={{position:"relative",display:"inline-block",marginRight:4}} onClick={function(e){ e.stopPropagation(); }}>
               <button className="btn btnxs"
                 onClick={function(){ setShowDriveMenu(function(v){ return !v; }); }}
-                style={{color:driveToken?"#6BAA8E":"#C8BCA8",borderColor:driveToken?"#4A8870":"#5A4A30"}}>
-                {driveStatus==="syncing"?"Drive…":"Drive"}
+                style={{color:driveToken?(driveStatus==="error"?"#C87070":"#6BAA8E"):"#C8BCA8",
+                  borderColor:driveToken?(driveStatus==="error"?"#8B2020":"#4A8870"):"#5A4A30",
+                  display:"flex",alignItems:"center",gap:"4px"}}>
+                <svg width="11" height="9" viewBox="0 0 87.3 78" fill="currentColor">
+                  <path d="m6.6 66.85 3.85 6.65c.8 1.4 1.95 2.5 3.3 3.3l13.75-23.8h-27.5c0 1.55.4 3.1 1.2 4.5z" fill="#0066da"/>
+                  <path d="m43.65 25-13.75-23.8c-1.35.8-2.5 1.9-3.3 3.3l-25.4 44a9.06 9.06 0 0 0 -1.2 4.5h27.5z" fill="#00ac47"/>
+                  <path d="m73.55 76.8c1.35-.8 2.5-1.9 3.3-3.3l1.6-2.75 7.65-13.25c.8-1.4 1.2-2.95 1.2-4.5h-27.502l5.852 11.5z" fill="#ea4335"/>
+                  <path d="m43.65 25 13.75-23.8c-1.35-.8-2.9-1.2-4.5-1.2h-18.5c-1.6 0-3.15.45-4.5 1.2z" fill="#00832d"/>
+                  <path d="m59.8 53h-32.3l-13.75 23.8c1.35.8 2.9 1.2 4.5 1.2h50.8c1.6 0 3.15-.45 4.5-1.2z" fill="#2684fc"/>
+                  <path d="m73.4 26.5-12.7-22c-.8-1.4-1.95-2.5-3.3-3.3l-13.75 23.8 16.15 27h27.45c0-1.55-.4-3.1-1.2-4.5z" fill="#ffba00"/>
+                </svg>
+                <span>{driveStatus==="syncing"?"Drive…":driveStatus==="error"?"Drive!":"Drive"}</span>
               </button>
               {showDriveMenu&&(
                 <div style={{position:"absolute",right:0,top:"calc(100% + 4px)",background:"var(--color-background-primary)",
@@ -2721,15 +2755,24 @@ function App(){
                     </div>
                   ):(
                     <div>
-                      <div style={{padding:"0.4rem 0.9rem",fontSize:"0.72rem",color:"var(--color-text-tertiary)",borderBottom:"0.5px solid var(--color-border-tertiary)",marginBottom:"0.4rem"}}>
-                        {driveStatus==="syncing"?"Syncing…":driveStatus==="loading"?"Loading…":driveStatus==="error"?("Error: "+driveError):("Last synced: "+driveFormatSync(driveLastSync))}
+                      <div style={{padding:"0.4rem 0.9rem",fontSize:"0.72rem",
+                        color:driveStatus==="error"?"var(--color-text-danger)":"var(--color-text-tertiary)",
+                        borderBottom:"0.5px solid var(--color-border-tertiary)",marginBottom:"0.4rem"}}>
+                        {driveStatus==="syncing"?"Syncing…":driveStatus==="loading"?"Loading…":driveStatus==="error"?driveError:("Last synced: "+driveFormatSync(driveLastSync))}
                       </div>
                       <div style={{padding:"0 0.75rem",display:"flex",flexDirection:"column",gap:"0.3rem"}}>
-                        <button className="btn btnsm" style={{width:"100%",textAlign:"center"}}
-                          onClick={function(){ setShowDriveMenu(false); driveSaveNow(driveToken,driveFileId); }}
-                          disabled={driveStatus==="syncing"||driveStatus==="loading"}>
-                          Sync now
-                        </button>
+                        {driveStatus==="error"?(
+                          <button className="btn btnsm" style={{width:"100%",textAlign:"center"}}
+                            onClick={function(){ setShowDriveMenu(false); setDriveStatus("idle"); setDriveError(null); driveConnect(); }}>
+                            Reconnect
+                          </button>
+                        ):(
+                          <button className="btn btnsm" style={{width:"100%",textAlign:"center"}}
+                            onClick={function(){ setShowDriveMenu(false); driveSaveNow(driveToken,driveFileId); }}
+                            disabled={driveStatus==="syncing"||driveStatus==="loading"}>
+                            Sync now
+                          </button>
+                        )}
                         <button className="btn btnsm" style={{width:"100%",textAlign:"center",color:"var(--color-text-danger)"}}
                           onClick={function(){ driveDisconnect(); }}>
                           Disconnect
@@ -2790,6 +2833,11 @@ function App(){
                   fontSize:"1rem",lineHeight:1,padding:"0 2px"}}>×</button>
             )}
           </div>
+          {driveStatus==="loading"&&(
+            <div style={{padding:"0.8rem",textAlign:"center",fontSize:"0.82rem",color:"var(--color-text-tertiary)",fontStyle:"italic"}}>
+              Loading library from Google Drive…
+            </div>
+          )}
           {fetching&&(
             <div style={{display:"flex",flexDirection:"column",alignItems:"center",padding:"2.5rem 1rem",gap:"1rem"}}>
               <svg width="36" height="36" viewBox="0 0 36 36" fill="none">
