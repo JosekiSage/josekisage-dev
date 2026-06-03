@@ -291,6 +291,29 @@ function isDefaultEntry(entry,folders){
   }
   return false;
 }
+function normalizeEntry(e){
+  // Return a stable sorted-key representation of an entry for comparison
+  var keys=Object.keys(e).filter(function(k){ return k!=="id"; }).sort();
+  var out={id:e.id};
+  keys.forEach(function(k){ out[k]=e[k]; });
+  return out;
+}
+function normalizeLibrary(entries,folders){
+  // Sort entries and folders by id for stable comparison
+  var sortedEntries=entries.slice().sort(function(a,b){ return (a.id||"").localeCompare(b.id||""); })
+    .map(normalizeEntry);
+  var sortedFolders=folders.filter(function(f){ return f.id!=="f-default"&&f.id!=="f-custom"; })
+    .slice().sort(function(a,b){ return (a.id||"").localeCompare(b.id||""); });
+  return JSON.stringify({entries:sortedEntries,folders:sortedFolders});
+}
+function librariesMatch(localEntries,localFolders,driveData){
+  if(!driveData) return false;
+  var localHash=normalizeLibrary(localEntries,localFolders);
+  var driveEntries=driveData.entries||[];
+  var driveFolders=driveData.folders||[];
+  var driveHash=normalizeLibrary(driveEntries,driveFolders);
+  return localHash===driveHash;
+}
 // ─────────────────────────────────────────────────────────────────────────────
 
 // --- Practice mode helpers ---
@@ -1906,6 +1929,12 @@ function App(){
       setDriveStatus("idle");
     }
 
+    function updateSyncTimeOnly(){
+      var ts=new Date().toISOString();
+      localStorage.setItem("joseki-drive-last-sync",ts); setDriveLastSync(ts);
+      setDriveStatus("idle");
+    }
+
     // No local custom data — load from Drive silently
     if(!hasLocalCustomData()){
       applyAndSync(); return;
@@ -1914,22 +1943,18 @@ function App(){
     if(!driveData||!(driveData.entries&&driveData.entries.length>0)){
       driveSaveNow(token,file.id); return;
     }
-    // Both have data
-    if(isStartup){
-      // On startup: silently use whichever is newer, no dialogue
-      if(driveTime>localTime){
-        applyAndSync();
-      } else {
-        // Local is newer or same — just update sync time, no upload needed
-        var ts2=new Date().toISOString();
-        localStorage.setItem("joseki-drive-last-sync",ts2); setDriveLastSync(ts2);
-        setDriveStatus("idle");
-      }
-    } else {
-      // On manual connect — show conflict dialogue
-      setDriveConflict({driveData:driveData,driveTime:driveTime,localTime:localTime});
-      setDriveStatus("idle");
+
+    // Content comparison — if libraries are identical, no conflict regardless of timestamps
+    var localCustomEntries=getCustomEntries();
+    var localCustomFolders=getCustomFolders();
+    if(librariesMatch(localCustomEntries,localCustomFolders,driveData)){
+      // Content is identical — just update sync timestamp, no action needed
+      updateSyncTimeOnly(); return;
     }
+
+    // Content genuinely differs — show conflict dialogue regardless of startup or manual connect
+    setDriveConflict({driveData:driveData,driveTime:driveTime,localTime:localTime});
+    setDriveStatus("idle");
   }
 
   function driveLoadOnConnect(token){
