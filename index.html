@@ -2495,6 +2495,12 @@ function App(){
     return folders.filter(function(f){ return f.parentId===folderId; })
       .some(function(sf){ return folderHasVisible(sf.id); });
   }
+  function countJosekiInFolder(folderId){
+    var direct=visibleEntries.filter(function(e){ return e.folderId===folderId; }).length;
+    var sub=folders.filter(function(f){ return f.parentId===folderId; })
+      .reduce(function(acc,sf){ return acc+countJosekiInFolder(sf.id); },0);
+    return direct+sub;
+  }
   var folderEntries=function(id){ return visibleEntries.filter(function(e){ return e.folderId===id; })
     .sort(function(a,b){ return a.name.localeCompare(b.name); }); };
   var unfoldered=visibleEntries.filter(function(e){ return !e.folderId; });
@@ -2660,7 +2666,7 @@ function App(){
             ):(
               <span className="fname" style={{flex:1}}>{folder.name}</span>
             )}
-            <span style={{fontSize:"0.68rem",color:"var(--color-text-tertiary)",fontFamily:"monospace",flexShrink:0}}>{fEntries.length+subFolders.length} items</span>
+            <span style={{fontSize:"0.68rem",color:"var(--color-text-tertiary)",fontFamily:"monospace",flexShrink:0}}>{countJosekiInFolder(folder.id)} items</span>
           </div>
           {/* Line 2 (mobile) / continued row (desktop): action buttons */}
           <div style={{display:"flex",alignItems:"center",gap:6}} onClick={function(e){ e.stopPropagation(); }}>
