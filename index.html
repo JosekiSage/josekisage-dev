@@ -1947,6 +1947,15 @@ function App(){
     // Content comparison — if libraries are identical, no conflict regardless of timestamps
     var localCustomEntries=getCustomEntries();
     var localCustomFolders=getCustomFolders();
+    var localHash=normalizeLibrary(localCustomEntries,localCustomFolders);
+    var driveHash=normalizeLibrary(driveData.entries||[],driveData.folders||[]);
+    localStorage.setItem("joseki-drive-debug", JSON.stringify({
+      localHash: localHash.slice(0,500),
+      driveHash: driveHash.slice(0,500),
+      match: localHash===driveHash,
+      localEntryCount: localCustomEntries.length,
+      driveEntryCount: (driveData.entries||[]).length
+    }));
     if(librariesMatch(localCustomEntries,localCustomFolders,driveData)){
       // Content is identical — just update sync timestamp, no action needed
       updateSyncTimeOnly(); return;
@@ -2844,6 +2853,13 @@ function App(){
                         <button className="btn btnsm" style={{width:"100%",textAlign:"center",color:"var(--color-text-danger)"}}
                           onClick={function(){ driveDisconnect(); }}>
                           Disconnect
+                        </button>
+                        <button className="btn btnsm" style={{width:"100%",textAlign:"center",fontSize:"0.7rem",color:"var(--color-text-tertiary)"}}
+                          onClick={function(){
+                            var d=localStorage.getItem("joseki-drive-debug");
+                            if(d) alert(d); else alert("No debug data yet — reconnect first");
+                          }}>
+                          Show debug
                         </button>
                       </div>
                     </div>
